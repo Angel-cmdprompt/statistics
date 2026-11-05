@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Running statistics: Welford and sampling</title>
+<style>
+:root{--bg:#000;--panel:#0e0d0a;--line:#2e2812;--text:#ebe6d6;--muted:#a49c82;--btn:#b8860b;--btnh:#d4a017;--btntx:#0a0800;--pt:env(safe-area-inset-top,0px);--pb:env(safe-area-inset-bottom,0px)}
+:root[data-theme="dark"]{--bg:#000}
+*{box-sizing:border-box}
+html{scroll-padding-top:var(--pt)}
+body{margin:0;background:#000;color:var(--text);font:17px/1.65 "Trebuchet MS","Segoe UI",system-ui,sans-serif;padding:calc(var(--pt) + 24px) 18px calc(var(--pb) + 40px)}
+main{max-width:960px;margin:0 auto}
+h1,h2,h3{font-family:Georgia,"Times New Roman",serif;font-weight:700;line-height:1.2;color:#f3ecd2}
+h1{font-size:2.3rem;margin:0 0 .3em;border-left:6px solid var(--btn);padding-left:16px}
+h2{font-size:1.6rem;margin:2.2em 0 .6em}
+h3{font-size:1.15rem;margin:1.6em 0 .4em;color:#d9b84a}
+p{max-width:75ch}
+.intro{color:var(--muted)}
+section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px 24px 24px;margin-top:26px}
+.eq{background:#080704;border-left:3px solid var(--btn);padding:10px 16px;margin:12px 0;font-family:Georgia,serif;font-size:1.05rem;overflow-x:auto}
+.key{background:#17130a;border:1px solid #5a4710;border-radius:8px;padding:10px 16px;margin:12px 0;overflow-x:auto;font-family:Georgia,serif}
+pre{background:#080704;border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:.88rem;line-height:1.5;color:#f0d98a}
+button{background:var(--btn);color:var(--btntx);border:0;border-radius:6px;padding:10px 22px;font:700 1rem inherit;font-family:inherit;cursor:pointer}
+button:hover{background:var(--btnh)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #ffd45c;outline-offset:2px}
+select,input{background:#000;color:var(--text);border:1px solid #5a4710;border-radius:6px;padding:9px 12px;font:inherit}
+input[type=text]{width:100%;max-width:560px}
+input[type=number]{width:110px}
+.row{display:flex;flex-wrap:wrap;gap:14px;align-items:end;margin:14px 0}
+label{display:flex;flex-direction:column;font-size:.85rem;color:var(--muted);gap:4px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.88rem;min-width:720px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:#d9b84a;font-weight:700}
+.th{color:var(--muted)}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+canvas{width:100%;height:auto;background:#050400;border:1px solid var(--line);border-radius:8px}
+.out{margin-top:10px;font-family:Consolas,monospace;font-size:.92rem;color:#f0d98a;overflow-x:auto}
+.cap{color:var(--muted);font-size:.9rem}
+@media (max-width:600px){h1{font-size:1.7rem}section{padding:4px 14px 18px}}
+</style>
+</head>
+<body>
+<main>
+<h1>Running mean and variance, and how samples behave</h1>
+<p class="intro">Part 1 derives Welford’s update rules step by step. Part 2 puts them to work in a simulation of hackers attacking systems, to see what sample statistics do as the sample grows.</p>
+
+<section>
+<h2>Part 1 · Welford’s update rules</h2>
+<p>Let x̄<sub>k</sub> be the average of the first k values, SS<sub>k</sub> = Σ(x<sub>i</sub> − x̄<sub>k</sub>)² their squared deviations, and s²<sub>k</sub> = SS<sub>k</sub>/(k−1) the sample variance for k ≥ 2. Write δ<sub>k</sub> = x<sub>k</sub> − x̄<sub>k−1</sub> for how far the new value lands from the old mean.</p>
+
+<h3>Updating the mean</h3>
+<p>Multiplying out the definition gives k·x̄<sub>k</sub> = (k−1)·x̄<sub>k−1</sub> + x<sub>k</sub>, so the new mean is a small correction of the old one:</p>
+<div class="key">x̄<sub>k</sub> = x̄<sub>k−1</sub> + δ<sub>k</sub> / k</div>
+<p>Two handy consequences: x̄<sub>k</sub> − x̄<sub>k−1</sub> = δ<sub>k</sub>/k, and x<sub>k</sub> − x̄<sub>k</sub> = δ<sub>k</sub>·(k−1)/k.</p>
+
+<h3>Updating the sum of squares</h3>
+<p>Start from SS<sub>k</sub> = Σx<sub>i</sub>² − k·x̄<sub>k</sub>² and subtract the same identity for k−1. What remains is</p>
+<div class="eq">SS<sub>k</sub> − SS<sub>k−1</sub> = x<sub>k</sub>² − k·x̄<sub>k</sub>² + (k−1)·x̄<sub>k−1</sub>²</div>
+<p>Because (k−1)·x̄<sub>k−1</sub> = k·x̄<sub>k</sub> − x<sub>k</sub>, the last term can be rewritten, and everything collapses into</p>
+<div class="eq">SS<sub>k</sub> − SS<sub>k−1</sub> = (x<sub>k</sub> − x̄<sub>k−1</sub>)(x<sub>k</sub> − x̄<sub>k</sub>)</div>
+<div class="key">SS<sub>k</sub> = SS<sub>k−1</sub> + (x<sub>k</sub> − x̄<sub>k−1</sub>)(x<sub>k</sub> − x̄<sub>k</sub>) = SS<sub>k−1</sub> + ((k−1)/k)·δ<sub>k</sub>², &nbsp; SS<sub>1</sub> = 0</div>
+
+<h3>Updating the variance</h3>
+<p>Replace SS<sub>k</sub> by (k−1)s²<sub>k</sub> and SS<sub>k−1</sub> by (k−2)s²<sub>k−1</sub>, then divide by k−1:</p>
+<div class="key">s²<sub>k</sub> = ((k−2)/(k−1))·s²<sub>k−1</sub> + δ<sub>k</sub>² / k &nbsp; (k ≥ 2), &nbsp; s²<sub>2</sub> = δ<sub>2</sub>²/2</div>
+<p>Every term added here is about the size of the spread in the data. The textbook shortcut Σx² − k·x̄² behaves differently: it subtracts two enormous, almost identical numbers whenever the mean dwarfs the spread, and the digits that matter vanish.</p>
+
+<h3>Implementation</h3>
+<pre>function welford(data) {
+  let k = 0, mean = 0, ss = 0;
+  for (const x of data) {
+    k++;
+    const d = x - mean;       // delta_k = x_k - mean_{k-1}
+    mean += d / k;            // new mean
+    ss   += d * (x - mean);   // SS_k = SS_{k-1} + (x_k - mean_{k-1})(x_k - mean_k)
+  }
+  return { mean, ss, variance: ss / (k - 1) };
+}</pre>
+
+<h3>Try it on your own numbers</h3>
+<p>Enter values separated by commas. The default list has a huge mean and a tiny spread, which is exactly where the shortcut formula struggles. The exact variance of the default list is 1.6667.</p>
+<div class="row">
+<label style="flex:1">Values<input type="text" id="vals" value="1000000001, 1000000002, 1000000003, 1000000004"></label>
+<button id="calc">Compare methods</button>
+</div>
+<div class="out" id="calcout" aria-live="polite"></div>
+
+<h3>Why the one-pass sums formula fails</h3>
+<p>The expression (Σx² − (Σx)²/n)/(n−1) is correct on paper. In floating point, though, both terms are gigantic and nearly equal when the spread is small, so their difference can be dominated by rounding error, sometimes even coming out negative.</p>
+</section>
+
+<section>
+<h2>Part 2 · Sample mean and variance in action</h2>
+<p>Each of m hackers attacks n systems and earns a score from 0 to 10 per system, drawn from one fixed distribution. Welford’s rules give each hacker an x̄ and an s² over the n scores, and then those results are averaged across all m hackers. Every hacker produces one long run of 10000 scores, and the statistics are read off at n = 10, 100, 1000 and 10000.</p>
+<div class="row">
+<label>Score distribution
+<select id="dist"><option value="bin">Binomial(10, 0.3)</option><option value="uni">Uniform on {0, …, 10}</option></select></label>
+<label>Number of hackers m<input type="number" id="m" value="2000" min="50" max="20000" step="50"></label>
+<button id="run">Run simulation</button>
+</div>
+<div class="out" id="status" aria-live="polite"></div>
+<h3>Probability of each score</h3>
+<canvas id="pmf" width="900" height="260" aria-label="Probability mass function"></canvas>
+
+<h3>Results by sample size</h3>
+<p class="cap">Measured values come first, theory is in brackets. The theoretical spread of s² uses Var(s²) = (μ₄ − ((n−3)/(n−1))·σ⁴)/n, where μ₄ is the fourth central moment. “SS/n” is the variance estimate with divisor n, expected to equal ((n−1)/n)·σ². The last column is the share of hackers whose interval x̄ ± 1.96·s/√n captures μ.</p>
+<div class="scroll"><table id="tbl"><thead><tr><th>n</th><th>mean of x̄</th><th>mean of s²</th><th>sd of x̄</th><th>sd of s²</th><th>mean of SS/n</th><th>interval hits μ</th></tr></thead><tbody></tbody></table></div>
+
+<h3>How the spread shrinks</h3>
+<p class="cap">Standard deviation of the sample means (left) and sample variances (right) across hackers, against n on log-log axes. Dots are simulated, the line is theory.</p>
+<div class="charts"><canvas id="c1" width="460" height="320"></canvas><canvas id="c2" width="460" height="320"></canvas></div>
+
+<h3>Distribution across hackers</h3>
+<p class="cap">Sample means (left) and sample variances (right). Yellow bars: n = 10. White outline: n = 1000. Both centre on the same value, yet the larger sample is far tighter.</p>
+<div class="charts"><canvas id="h1" width="460" height="320"></canvas><canvas id="h2" width="460" height="320"></canvas></div>
+
+<h3>What the numbers say</h3>
+<p>Averaged over hackers, x̄ lands on μ and s² lands on σ² at every n, even n = 10. These estimators are unbiased: E[x̄] = μ and E[s²] = σ². The n−1 divisor is what makes that true. Dividing by n instead gives ((n−1)/n)·σ² on average, a shortfall that is plain at small n and visible in the SS/n column. Whatever gaps remain are simulation noise, and they close as m grows. The coverage column hovers near 95%; it starts a bit lower for small n because 1.96 assumes a normal shape and s is itself noisy, then climbs toward 0.95.</p>
+<p>This matters because μ and σ² are never known in practice, while x̄ and s² come straight from the data and are right on average. With Var(x̄) = σ²/n, the standard error s/√n is available, and confidence intervals and tests are built on it.</p>
+<p>Growing n does not move the averages, but it tightens them. The spread of x̄ falls like σ/√n, so a hundred times more systems means ten times more precision. The spread of s² also falls like 1/√n, with a bigger constant, √(μ₄ − σ⁴). Pinning down a variance depends on the fourth moment, so it is always harder than pinning down a mean at the same n.</p>
+</section>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const Y="#d4a017",W="#f3ecd2",G="#3a3213",T="#a49c82";
+// ---------- Part 1 demo
+function welford(a){let k=0,m=0,ss=0;for(const x of a){k++;const d=x-m;m+=d/k;ss+=d*(x-m);}return{mean:m,variance:ss/(k-1)};}
+$("calc").onclick=()=>{
+  const a=$("vals").value.split(",").map(Number).filter(v=>!isNaN(v)&&isFinite(v));
+  if(a.length<2){$("calcout").textContent="Enter at least two numbers.";return;}
+  const n=a.length,s=a.reduce((p,c)=>p+c,0),q=a.reduce((p,c)=>p+c*c,0);
+  const naive=(q-s*s/n)/(n-1),w=welford(a);
+  $("calcout").innerHTML="Welford variance: "+w.variance+"<br>One-pass sums formula: "+naive;
+};
+$("calc").onclick();
+// ---------- Part 2
+const NS=[10,100,1000,10000];
+function dist(t){
+  const p=[];
+  if(t==="bin"){const c=[1,10,45,120,210,252,210,120,45,10,1];for(let k=0;k<=10;k++)p.push(c[k]*Math.pow(.3,k)*Math.pow(.7,10-k));}
+  else for(let k=0;k<=10;k++)p.push(1/11);
+  let mu=0;p.forEach((v,k)=>mu+=k*v);
+  let v2=0,v4=0;p.forEach((v,k)=>{v2+=v*(k-mu)**2;v4+=v*(k-mu)**4;});
+  const cdf=[];let c=0;p.forEach(v=>{c+=v;cdf.push(c);});
+  return{p,mu,v2,v4,cdf};
+}
+function sd(a){const n=a.length;let m=0;a.forEach(x=>m+=x);m/=n;let s=0;a.forEach(x=>s+=(x-m)**2);return Math.sqrt(s/n);}
+function avg(a){let s=0;a.forEach(x=>s+=x);return s/a.length;}
+function f(x){return Math.abs(x)>=1e4||(x!==0&&Math.abs(x)<1e-3)?x.toExponential(2):x.toFixed(4);}
+function cv(id){const c=$(id),x=c.getContext("2d");x.clearRect(0,0,c.width,c.height);x.font="13px sans-serif";return[c,x];}
+function drawPmf(d){
+  const[c,x]=cv("pmf"),pad=36,w=c.width-pad*2,h=c.height-pad*2,mx=Math.max(...d.p)*1.1,bw=w/11;
+  x.fillStyle=Y;x.strokeStyle=G;x.fillStyle=T;
+  d.p.forEach((v,k)=>{const bh=v/mx*h;x.fillStyle=Y;x.fillRect(pad+k*bw+6,pad+h-bh,bw-12,bh);x.fillStyle=T;x.textAlign="center";x.fillText(k,pad+k*bw+bw/2,c.height-12);x.fillText(v.toFixed(3),pad+k*bw+bw/2,pad+h-bh-6);});
+  x.strokeStyle=G;x.beginPath();x.moveTo(pad,pad+h);x.lineTo(pad+w,pad+h);x.stroke();
+}
+function logplot(id,ttl,sim,theo){
+  const[c,x]=cv(id),L=58,R=14,Tp=34,B=44,w=c.width-L-R,h=c.height-Tp-B;
+  const all=sim.concat(theo(10),theo(10000)),lo=Math.log10(Math.min(...all))-.1,hi=Math.log10(Math.max(...all))+.1;
+  const X=n=>L+(Math.log10(n)-1)/3*w,Yy=v=>Tp+h-(Math.log10(v)-lo)/(hi-lo)*h;
+  x.strokeStyle=G;x.fillStyle=T;x.textAlign="center";
+  NS.forEach(n=>{x.beginPath();x.moveTo(X(n),Tp);x.lineTo(X(n),Tp+h);x.stroke();x.fillText(n,X(n),Tp+h+18);});
+  x.textAlign="right";
+  for(let e=Math.ceil(lo);e<=hi;e++){const yy=Yy(Math.pow(10,e));x.beginPath();x.moveTo(L,yy);x.lineTo(L+w,yy);x.stroke();x.fillText("1e"+e,L-6,yy+4);}
+  x.fillStyle=W;x.textAlign="left";x.fillText(ttl,L,20);x.fillStyle=T;x.textAlign="center";x.fillText("n",L+w/2,c.height-8);
+  x.strokeStyle=Y;x.lineWidth=2;x.beginPath();x.moveTo(X(10),Yy(theo(10)));x.lineTo(X(10000),Yy(theo(10000)));x.stroke();x.lineWidth=1;
+  x.fillStyle=W;sim.forEach((v,i)=>{x.beginPath();x.arc(X(NS[i]),Yy(v),5,0,7);x.fill();});
+}
+function hist(id,ttl,a,b,mu){
+  const[c,x]=cv(id),L=20,Tp=34,B=34,w=c.width-L*2,h=c.height-Tp-B,K=36;
+  const all=a.concat(b);let lo=Math.min(...all),hi=Math.max(...all);if(hi===lo)hi=lo+1;
+  const bin=arr=>{const o=new Array(K).fill(0);arr.forEach(v=>o[Math.min(K-1,Math.floor((v-lo)/(hi-lo)*K))]++);return o.map(v=>v/arr.length);};
+  const A=bin(a),Bn=bin(b),mx=Math.max(...A,...Bn)*1.08,bw=w/K;
+  A.forEach((v,i)=>{x.fillStyle=Y;x.globalAlpha=.85;x.fillRect(L+i*bw,Tp+h-v/mx*h,bw-1,v/mx*h);});
+  x.globalAlpha=1;x.strokeStyle=W;x.lineWidth=1.5;
+  Bn.forEach((v,i)=>x.strokeRect(L+i*bw,Tp+h-v/mx*h,bw-1,v/mx*h));
+  x.lineWidth=1;x.fillStyle=W;x.textAlign="left";x.fillText(ttl,L,20);
+  x.fillStyle=T;x.textAlign="left";x.fillText(f(lo),L,c.height-10);x.textAlign="right";x.fillText(f(hi),L+w,c.height-10);
+  const mxp=L+(mu-lo)/(hi-lo)*w;x.strokeStyle="#ff5a5a";x.setLineDash([5,4]);x.beginPath();x.moveTo(mxp,Tp);x.lineTo(mxp,Tp+h);x.stroke();x.setLineDash([]);
+}
+function simulate(){
+  const d=dist($("dist").value),m=Math.max(50,Math.min(20000,+$("m").value||2000));
+  drawPmf(d);
+  const R=NS.map(()=>({mean:[],s2:[],ssn:[],hit:0}));
+  const N=NS[NS.length-1];
+  for(let h=0;h<m;h++){
+    let k=0,mean=0,ss=0,j=0;
+    for(let i=0;i<N;i++){
+      const u=Math.random();let v=0;while(v<10&&u>d.cdf[v])v++;
+      k++;const dl=v-mean;mean+=dl/k;ss+=dl*(v-mean);
+      if(k===NS[j]){const s2=ss/(k-1),r=R[j];r.mean.push(mean);r.s2.push(s2);r.ssn.push(ss/k);
+        if(Math.abs(mean-d.mu)<=1.96*Math.sqrt(s2/k))r.hit++;j++;}
+    }
+  }
+  const tb=document.querySelector("#tbl tbody");tb.innerHTML="";
+  const simM=[],simV=[];
+  NS.forEach((n,j)=>{
+    const r=R[j],sm=sd(r.mean),sv=sd(r.s2),tm=Math.sqrt(d.v2/n),tv=Math.sqrt((d.v4-((n-3)/(n-1))*d.v2*d.v2)/n);
+    simM.push(sm);simV.push(sv);
+    tb.insertAdjacentHTML("beforeend",`<tr><td>${n}</td><td>${f(avg(r.mean))} <span class="th">(${f(d.mu)})</span></td><td>${f(avg(r.s2))} <span class="th">(${f(d.v2)})</span></td><td>${f(sm)} <span class="th">(${f(tm)})</span></td><td>${f(sv)} <span class="th">(${f(tv)})</span></td><td>${f(avg(r.ssn))} <span class="th">(${f(d.v2*(n-1)/n)})</span></td><td>${(r.hit/m*100).toFixed(1)}%</td></tr>`);
+  });
+  logplot("c1","sd of sample means",simM,n=>Math.sqrt(d.v2/n));
+  logplot("c2","sd of sample variances",simV,n=>Math.sqrt((d.v4-((n-3)/(n-1))*d.v2*d.v2)/n));
+  hist("h1","sample means",R[0].mean,R[2].mean,d.mu);
+  hist("h2","sample variances",R[0].s2,R[2].s2,d.v2);
+  $("status").textContent="Done: "+m+" hackers × "+N+" scores each. μ = "+f(d.mu)+", σ² = "+f(d.v2)+". Red dashed line marks the true value.";
+}
+$("run").onclick=()=>{$("status").textContent="Running…";setTimeout(simulate,30);};
+$("dist").onchange=()=>drawPmf(dist($("dist").value));
+drawPmf(dist("bin"));
+$("run").click();
+</script>
+</body>
+</html>
